@@ -17,18 +17,22 @@ class Sender(BasicSender.BasicSender):
     # Main sending loop.
     def start(self):
       # add things here
-        
+        no_reads_after = False
         first_time = True
         read_size = 1024
         window = []
         curr_sequence_number = 0
+        timeout = 0.5
         #create syn packet and send it
         random_sequence_number = random.randint(1, 100)
         syn_packet = self.make_packet('syn', random_sequence_number, '')
         self.send(syn_packet)
         #print "hello"
         #receive ack for syn packet, pass in timeout value?
-        ack_packet = self.receive()
+        ack_packet = self.receive(timeout)
+        while ack_packet is None:
+            self.send(syn_packet)
+            ack_packet = self.receive(timeout)
         if ack_packet is not None:
             if Checksum.validate_checksum(ack_packet):
                 #print "here"
@@ -38,8 +42,6 @@ class Sender(BasicSender.BasicSender):
                 #print random_sequence_number + 1
                 # var = ack_packet_split[0] is 'ack' and int(ack_packet_split[1]) is random_sequence_number + 1
                 # #print var
-                var = ack_packet_split[0] == 'ack'
-                var2 = int(ack_packet_split[1]) is (random_sequence_number + 1)
                 #print var
                 #print var2
                 ##print var and var2
@@ -47,20 +49,24 @@ class Sender(BasicSender.BasicSender):
                 if (str(ack_packet_split[0]) == 'ack') and (int(ack_packet_split[1]) is (random_sequence_number + 1)):
                     #print "here3"
                     curr_sequence_number = int(ack_packet_split[1])
+                    # create window
+                    for i in range(7):
+                        read_result = self.infile.read(read_size)
+                        if read_result == '':
+                            #print "empty string"
+                            break
+                        packet = self.make_packet('dat', curr_sequence_number + i, read_result)
+                        window.append(packet)
+                    # send initial window
+                    for i in window:
+                        self.send(i)
+
                     while True:
-                        #print "in the loop"
-                        if first_time:
-                            for i in range(7):
-                                read_result = self.infile.read(read_size)
-                                if read_result == '':
-                                    #print "empty string"
-                                    break
-                                packet = self.make_packet('dat', curr_sequence_number + i, read_result)
-                                window.append(packet)
-                            for i in window:
-                                self.send(i)
-                        first_time = False
-                        ack_packet = self.receive()
+                        #print "here"
+                        
+                        ack_packet = self.receive(timeout)
+
+                        # advance window
                         if ack_packet is not None:
                             if Checksum.validate_checksum(ack_packet):
                                 ack_packet_split = self.split_packet(ack_packet)
@@ -68,24 +74,39 @@ class Sender(BasicSender.BasicSender):
                                 #print ack_packet_split
                                 #print int(self.split_packet(window[0])[1]) + 1
                                 #print int(ack_packet_split[1]) == (int(self.split_packet(window[0])[1]) + 1)
-                                if ack_packet_split[0] == 'ack' and int(ack_packet_split[1]) == (int(self.split_packet(window[0])[1]) + 1):
-                                    #print "inside here"
-                                    read_result = self.infile.read(read_size)
-                                    if read_result == '':
-                                        #print "empty string 2"
-                                        break
-                                    packet = self.make_packet('dat', int(self.split_packet(window[-1])[1]) + 1, read_result)
-                                    del window[0]
-                                    window.append(packet)
-                                    self.send(packet)
-                        # else:
-                        #     # do stuff if there is a timeout
-                        #     #print "hello2"
+                                window_advance_amount = int(ack_packet_split[1]) - int(self.split_packet(window[0])[1])
+                                # if message type is ack and ACK sequence number is (sequence number of first entry of window + 1)
+                                
+                                if ack_packet_split[0] == 'ack': 
+                                    if window_advance_amount > 0 and not no_reads_after:#int(ack_packet_split[1]) == (int(self.split_packet(window[0])[1]) + 1):
+                                        #print "inside here"
+                                        while window_advance_amount > 0 :
+                                            read_result = self.infile.read(read_size)
+                                            if read_result == '':
+                                                #no reads after
+                                                no_reads_after = True
+                                                break
+                                            packet = self.make_packet('dat', int(self.split_packet(window[-1])[1]) + 1, read_result)
+                                            del window[0]
+                                            window.append(packet)
+                                            self.send(packet)
+                                            window_advance_amount -= 1
+
+                                    else:
+                                        #if ACK sequence number is (last window item sequence number + 1)
+                                        if int(ack_packet_split[1]) == (int(self.split_packet(window[-1])[1]) + 1) and no_reads_after:
+                                            break
+                        else:
+                            # resend window there is a timeout
+                            for i in window:
+                                self.send(i)
                     # send fin
                     #print "fin"
+
+                    # terminate connection
                     fin_packet = self.make_packet('fin', int(self.split_packet(window[-1])[1]) + 1, '')
                     self.send(fin_packet)
-                    ack_packet = self.receive()
+                    ack_packet = self.receive(timeout)
                     if ack_packet is not None:
                         if Checksum.validate_checksum(ack_packet):
                             ack_packet_split = self.split_packet(ack_packet)
@@ -93,8 +114,8 @@ class Sender(BasicSender.BasicSender):
                                 pass
                                 #print "crap"
         # else:
-        #     # do stuff if there is a timeout
-        #     print "hello3"
+        #     # resend syn if there is a timeout
+        #     print "syn dropped"
     
 
 '''
