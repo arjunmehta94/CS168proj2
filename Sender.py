@@ -56,10 +56,10 @@ class Sender(BasicSender.BasicSender):
                             #print "empty string"
                             break
                         packet = self.make_packet('dat', curr_sequence_number + i, read_result)
-                        window.append(packet)
+                        window.append([packet, 0])
                     # send initial window
                     for i in window:
-                        self.send(i)
+                        self.send(i[0])
 
                     while True:
                         #print "here"
@@ -70,11 +70,21 @@ class Sender(BasicSender.BasicSender):
                         if ack_packet is not None:
                             if Checksum.validate_checksum(ack_packet):
                                 ack_packet_split = self.split_packet(ack_packet)
+                                
+                                for i in window:
+                                    if int(self.split_packet(i[0])[1]) == int(ack_packet_split[1]):
+                                        if i[1] >= 4:
+                                            self.send(i[0])
+                                            i[1] = 0
+                                        else:
+                                            i[1] += 1
+
+                                    
                                 #print "over here"
                                 #print ack_packet_split
                                 #print int(self.split_packet(window[0])[1]) + 1
                                 #print int(ack_packet_split[1]) == (int(self.split_packet(window[0])[1]) + 1)
-                                window_advance_amount = int(ack_packet_split[1]) - int(self.split_packet(window[0])[1])
+                                window_advance_amount = int(ack_packet_split[1]) - int(self.split_packet(window[0][0])[1])
                                 # if message type is ack and ACK sequence number is (sequence number of first entry of window + 1)
                                 
                                 if ack_packet_split[0] == 'ack': 
@@ -86,31 +96,31 @@ class Sender(BasicSender.BasicSender):
                                                 #no reads after
                                                 no_reads_after = True
                                                 break
-                                            packet = self.make_packet('dat', int(self.split_packet(window[-1])[1]) + 1, read_result)
+                                            packet = self.make_packet('dat', int(self.split_packet(window[-1][0])[1]) + 1, read_result)
                                             del window[0]
-                                            window.append(packet)
+                                            window.append([packet, 0])
                                             self.send(packet)
                                             window_advance_amount -= 1
 
                                     else:
                                         #if ACK sequence number is (last window item sequence number + 1)
-                                        if int(ack_packet_split[1]) == (int(self.split_packet(window[-1])[1]) + 1) and no_reads_after:
+                                        if int(ack_packet_split[1]) == (int(self.split_packet(window[-1][0])[1]) + 1) and no_reads_after:
                                             break
                         else:
                             # resend window there is a timeout
                             for i in window:
-                                self.send(i)
+                                self.send(i[0])
                     # send fin
                     #print "fin"
 
                     # terminate connection
-                    fin_packet = self.make_packet('fin', int(self.split_packet(window[-1])[1]) + 1, '')
+                    fin_packet = self.make_packet('fin', int(self.split_packet(window[-1][0])[1]) + 1, '')
                     self.send(fin_packet)
                     ack_packet = self.receive(timeout)
                     if ack_packet is not None:
                         if Checksum.validate_checksum(ack_packet):
                             ack_packet_split = self.split_packet(ack_packet)
-                            if ack_packet_split[0] == 'ack' and int(ack_packet_split[1]) == int(self.split_packet(window[-1])[1]) + 2:
+                            if ack_packet_split[0] == 'ack' and int(ack_packet_split[1]) == int(self.split_packet(window[-1][0])[1]) + 2:
                                 pass
                                 #print "crap"
         # else:
