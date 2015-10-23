@@ -46,9 +46,12 @@ class Sender(BasicSender.BasicSender):
                 #print var2
                 ##print var and var2
                 #print ack_packet_split[0]
-                if (str(ack_packet_split[0]) == 'ack') and (int(ack_packet_split[1]) is (random_sequence_number + 1)):
+                if (str(ack_packet_split[0]) == 'ack')or (str(ack_packet_split[0]) == 'sack'): #and (int(ack_packet_split[1]) is (random_sequence_number + 1)):
                     #print "here3"
-                    curr_sequence_number = int(ack_packet_split[1])
+                    if not self.sackMode:
+                        curr_sequence_number = int(ack_packet_split[1])
+                    else:
+                        curr_sequence_number = int(ack_packet_split[1][0])
                     # create window
                     for i in range(7):
                         read_result = self.infile.read(read_size)
@@ -72,22 +75,46 @@ class Sender(BasicSender.BasicSender):
                                 ack_packet_split = self.split_packet(ack_packet)
                                 
                                 for i in window:
-                                    if int(self.split_packet(i[0])[1]) == int(ack_packet_split[1]):
-                                        if i[1] >= 4:
-                                            self.send(i[0])
-                                            i[1] = 0
-                                        else:
-                                            i[1] += 1
+                                    if not self.sackMode:
+                                        if int(self.split_packet(i[0])[1]) == int(ack_packet_split[1]):
+                                            if i[1] >= 4:
+                                                self.send(i[0])
+                                                i[1] = 0
+                                            else:
+                                                i[1] += 1
+                                    else:
+                                        if int(self.split_packet(i[0])[1]) == int(ack_packet_split[1][0]):
+                                            print "checking 1"
+                                            print ack_packet_split
+                                            print ack_packet_split[1].split(';')[1]
+                                            #print int(min(ack_packet_split[1].split(';')[1].split(',')))
+                                            if ack_packet_split[1].split(';')[1] != '':
+                                                print "checking 2"
+                                                if i[1] >= 4:
+                                                    value_limit_to_send = int(min(ack_packet_split[1].split(';')[1].split(',')))
+                                                    cum_ack_val = int(ack_packet_split[1].split(';')[0])
+                                                    for j in range(value_limit_to_send-cum_ack_val):
+                                                        self.send(window[j][0])
+                                                        i[1] = 0
+                                                else:
+                                                    i[1] += 1  
+                                            else:
+                                                print "sending"
+                                                print window[1][0]
+                                                self.send(window[1][0])  
 
                                     
                                 #print "over here"
                                 #print ack_packet_split
                                 #print int(self.split_packet(window[0])[1]) + 1
                                 #print int(ack_packet_split[1]) == (int(self.split_packet(window[0])[1]) + 1)
-                                window_advance_amount = int(ack_packet_split[1]) - int(self.split_packet(window[0][0])[1])
+                                if not self.sackMode:
+                                    window_advance_amount = int(ack_packet_split[1]) - int(self.split_packet(window[0][0])[1])
+                                else:
+                                    window_advance_amount = int(ack_packet_split[1][0]) - int(self.split_packet(window[0][0])[1])
                                 # if message type is ack and ACK sequence number is (sequence number of first entry of window + 1)
                                 
-                                if ack_packet_split[0] == 'ack': 
+                                if ack_packet_split[0] == 'ack' or ack_packet_split[0] == 'sack': 
                                     if window_advance_amount > 0 and not no_reads_after:#int(ack_packet_split[1]) == (int(self.split_packet(window[0])[1]) + 1):
                                         #print "inside here"
                                         while window_advance_amount > 0 :
@@ -104,12 +131,29 @@ class Sender(BasicSender.BasicSender):
 
                                     else:
                                         #if ACK sequence number is (last window item sequence number + 1)
-                                        if int(ack_packet_split[1]) == (int(self.split_packet(window[-1][0])[1]) + 1) and no_reads_after:
-                                            break
+                                        if not self.sackMode:
+                                            if int(ack_packet_split[1]) == (int(self.split_packet(window[-1][0])[1]) + 1) and no_reads_after:
+                                                break
+                                        else:
+                                            if int(ack_packet_split[1][0]) == (int(self.split_packet(window[-1][0])[1]) + 1) and no_reads_after:
+                                                break
                         else:
                             # resend window there is a timeout
-                            for i in window:
-                                self.send(i[0])
+                            if not self.sackMode:
+                                for i in window:
+                                    self.send(i[0])
+                            else:
+                                print "checking 3"
+                                print ack_packet_split
+                               # print int(min(ack_packet_split[1].split(';')[1].split(',')))
+                                if ack_packet_split[1].split(';')[1] != '':
+                                    print "checking 4"
+                                    value_limit_to_send = int(min(ack_packet_split[1].split(';')[1].split(',')))
+                                    cum_ack_val = int(ack_packet_split[1].split(';')[0])
+                                    for j in range(value_limit_to_send-cum_ack_val):
+                                        self.send(window[j][0])
+                                else:
+                                    self.send(window[0][0])
                     # send fin
                     #print "fin"
 
