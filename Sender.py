@@ -1,5 +1,6 @@
 import sys
 import getopt
+import random
 
 import Checksum
 import BasicSender
@@ -16,8 +17,124 @@ class Sender(BasicSender.BasicSender):
     # Main sending loop.
     def start(self):
       # add things here
-      pass
-        
+        no_reads_after = False
+        first_time = True
+        read_size = 1024
+        window = []
+        curr_sequence_number = 0
+        timeout = 0.5
+        smallest = -1
+        limit = -1
+        #create syn packet and send it
+        random_sequence_number = random.randint(1, 100)
+        syn_packet = self.make_packet('syn', random_sequence_number, '')
+        self.send(syn_packet)
+        ack_packet = self.receive(timeout)
+        while ack_packet is None:
+            self.send(syn_packet)
+            ack_packet = self.receive(timeout)
+        if ack_packet is not None:
+            if Checksum.validate_checksum(ack_packet):
+                ack_packet_split = self.split_packet(ack_packet)
+                if ((str(ack_packet_split[0]) == 'ack') and (int(ack_packet_split[1]) is (random_sequence_number + 1))) or ((str(ack_packet_split[0]) == 'sack') and (int(ack_packet_split[1].split(";")[0]) is random_sequence_number+1)):
+                    curr_sequence_number = random_sequence_number+1
+                    # create window
+                    smallest = curr_sequence_number;
+                    limit = curr_sequence_number+1;
+                    for i in range(7):
+                        read_result = self.infile.read(read_size)
+                        if read_result == '':
+                            break  
+                        packet = self.make_packet('dat', curr_sequence_number + i, read_result)
+                        window.append([packet, 0])
+                    # send initial window
+                    for i in window:
+                        self.send(i[0])
+                    while True:
+                        
+                        ack_packet = self.receive(timeout)
+
+                        # advance window
+                        if ack_packet is not None:
+                            if Checksum.validate_checksum(ack_packet):
+                                ack_packet_split = self.split_packet(ack_packet)
+                                lst = ack_packet_split[1].split(";")
+                                if not self.sackMode:     
+                                    for i in window:
+                                        if int(self.split_packet(i[0])[1]) == int(ack_packet_split[1]):
+                                            if i[1] >= 4:
+                                                self.send(i[0])
+                                                i[1] = 0
+                                            else:
+                                                i[1] += 1
+                                else:
+                                    smallest = int(lst[0])
+                                    if lst[1] != '':
+                                        limit = int(min(lst[1].split(",")))
+                                    else:
+                                        limit = smallest+1
+                                    for packet_lst in window:
+                                        if int(self.split_packet(packet_lst[0])[1]) == int(lst[0]):
+                                            if packet_lst[1] >= 4:
+                                                for i in window:
+                                                    if int(self.split_packet(i[0])[1]) >= smallest and int(self.split_packet(i[0])[1]) < limit:
+                                                        self.send(i[0])
+                                                        i[1] = 0
+                                            else:
+                                                packet_lst[1] += 1
+                                            break
+                                    
+                                if not self.sackMode:
+                                    window_advance_amount = int(ack_packet_split[1]) - int(self.split_packet(window[0][0])[1])
+                                # if message type is ack and ACK sequence number is (sequence number of first entry of window + 1)
+                                else:
+                                    window_advance_amount = int(lst[0]) - int(self.split_packet(window[0][0])[1]) 
+                                
+                                if ack_packet_split[0] == 'ack' or ack_packet_split[0] == 'sack': 
+                                    if window_advance_amount > 0 and not no_reads_after:
+                                        while window_advance_amount > 0 :
+                                            read_result = self.infile.read(read_size)
+                                            if read_result == '':
+                                                #no reads after
+                                                no_reads_after = True
+                                                break
+                                            packet = self.make_packet('dat', int(self.split_packet(window[-1][0])[1]) + 1, read_result)
+                                            del window[0]
+                                            window.append([packet, 0])
+                                            self.send(packet)
+                                            window_advance_amount -= 1
+
+                                    else:
+                                        #if ACK sequence number is (last window item sequence number + 1)
+                                        if not self.sackMode:
+                                            if int(ack_packet_split[1]) == (int(self.split_packet(window[-1][0])[1]) + 1) and no_reads_after:
+                                                break
+                                        else:
+                                            if int(lst[0]) == (int(self.split_packet(window[-1][0])[1]) + 1) and no_reads_after:
+                                                break
+                        else:
+                            # resend window there is a timeout
+                            if not self.sackMode:   
+                                for i in window:
+                                    self.send(i[0])
+                            else:
+                                #which ones to send
+                                for i in window:
+                                    if (int(self.split_packet(i[0])[1]) >= smallest) and (int(self.split_packet(i[0])[1]) < limit):
+                                        self.send(i[0])
+                    # send fin
+
+                    # terminate connection
+                    fin_packet = self.make_packet('fin', int(self.split_packet(window[-1][0])[1]) + 1, '')
+                    self.send(fin_packet)
+                    ack_packet = self.receive(timeout)
+                    if ack_packet is not None:
+                        if Checksum.validate_checksum(ack_packet):
+                            ack_packet_split = self.split_packet(ack_packet)
+                            if ack_packet_split[0] == 'ack' and int(ack_packet_split[1]) == int(self.split_packet(window[-1][0])[1]) + 2:
+                                pass
+    
+
 '''
 This will be run if you run this script from the command line. You should not
 change any of this; the grader may rely on the behavior here to test your
